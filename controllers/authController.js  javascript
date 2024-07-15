@@ -1,0 +1,206 @@
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const { check, validationResult } = require('express-validator');
+const speakeasy = require('speakeasy');
+const { sendRegistrationEmail, sendPasswordResetEmail } = require('./emailController');
+
+exports.registerUser = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const { name, email, password } = req.body;
+
+  try {
+    let user = await User.findOne({ email });
+    if (user) {
+      return res.status(400).json({ msg: 'User already exists' });
+    }
+
+    const confirmationCode = crypto.randomBytes(20).toString('hex');
+
+    user = new User({
+      name,
+      email,
+      password,
+      confirmationCode,
+    });
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(password, salt);
+
+    await user.save();
+
+    await sendRegistrationEmail(user);
+
+    res.json({ msg: 'Registration successful! Please check your email to confirm your account.' });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+};
+
+exports.confirmEmail = async (req, res) => {
+  const { confirmationCode } = req.params;
+
+  try {
+    const user = await User.findOne({ confirmationCode });
+    if (!user) {
+      return res.status(400).json({ msg: 'Invalid confirmation code' });
+    }
+
+    user.confirmationCode = '';
+    await user.save();
+
+    res.json({ msg: 'Email confirmed successfully!' });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+};
+
+exports.loginUser = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const { email, password } = req.body;
+
+  try {
+    let user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ msg: 'Invalid Credentials' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ msg: 'Invalid Credentials' });
+    }
+
+    const payload = {
+      user: {
+        id: user.id,
+      },
+    };
+
+    jwt.sign(
+      payload,
+      process.env.JWT_SECRET,
+      { expiresIn: 360000 },
+      (err, token) => {
+        if (err) throw err;
+        res.json({ token });
+      }
+    );
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+};
+
+exports.forgotPassword = async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ msg: 'User not found' });
+    }
+
+    const resetToken = crypto.randomBytes(20).toString('hex');
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpires = Date.now() + 3600000; // 1 hour
+
+    await user.save();
+
+    await sendPasswordResetEmail(user, resetToken);
+
+    res.json({ msg: 'Password reset email sent' });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+};
+
+exports.resetPassword = async (req, res) => {
+  const { resetToken } = req.params;
+  const { password } = req.body;
+
+  try {
+    const user = await User.findOne({
+      resetPasswordToken: resetToken,
+      resetPasswordExpires: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      return res.status(400).json({ msg: 'Invalid or expired reset token' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(password, salt);
+    user.resetPasswordToken = '';
+    user.resetPasswordExpires = null;
+
+    await user.save();
+
+    res.json({ msg: 'Password reset successful' });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+};
+
+exports.generate2FASecret = async (req, res) => {
+  const secret = speakeasy.generateSecret({ length: 20 });
+  const user = await User.findById(req.user.id);
+  user.twoFactorSecret = secret.base32;
+  await user.save();
+
+  res.json({ secret: secret.otpauth_url });
+};
+
+exports.verify2FA = async (req, res) => {
+  const { token } = req.body;
+  const user = await User.findById(req.user.id);
+  const verified = speakeasy.totp.verify({
+    secret: user.twoFactorSecret,
+    encoding: 'base32',
+    token,
+  });
+
+  if (verified) {
+    res.json({ msg: '2FA verified successfully' });
+  } else {
+    res.status(400).json({ msg: 'Invalid 2FA token' });
+  }
+};
+
+exports.updateUserProfile = async (req, res) => {
+  const { name, email, password } = req.body;
+
+  try {
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    if (name) user.name = name;
+    if (email) user.email = email;
+    if (password) {
+      const salt = await bcrypt.genSalt(10);
+      user.password = await bcrypt.hash(password, salt);
+    }
+
+    await user.save();
+
+    res.json({ msg: 'Profile updated successfully' });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+};
