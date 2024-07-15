@@ -1,39 +1,29 @@
+// controllers/emailController.js
+
 const nodemailer = require('nodemailer');
 
-const sendEmail = async (to, subject, text) => {
+exports.sendEmail = async (req, res) => {
+  const { to, subject, text } = req.body;
+
   const transporter = nodemailer.createTransport({
-    host: process.env.MAIL_HOST,
-    port: process.env.MAIL_PORT,
+    service: 'Gmail',
     auth: {
-      user: process.env.MAIL_USER,
-      pass: process.env.MAIL_PASS,
+      user: process.env.EMAIL, // your email
+      pass: process.env.PASSWORD, // your email password
     },
   });
 
   const mailOptions = {
-    from: process.env.MAIL_USER,
+    from: process.env.EMAIL,
     to,
     subject,
     text,
   };
 
-  await transporter.sendMail(mailOptions);
-};
-
-exports.sendRegistrationEmail = async (user) => {
-  const subject = 'Welcome to Credit Repair';
-  const text = `Hello ${user.name},\n\nThank you for registering at Credit Repair.\n\nBest regards,\nCredit Repair Team`;
-  await sendEmail(user.email, subject, text);
-};
-
-exports.sendPasswordResetEmail = async (user, resetToken) => {
-  const subject = 'Password Reset';
-  const text = `Hello ${user.name},\n\nYou requested a password reset. Click the following link to reset your password: ${process.env.BASE_URL}/api/auth/reset/${resetToken}\n\nBest regards,\nCredit Repair Team`;
-  await sendEmail(user.email, subject, text);
-};
-
-exports.sendDisputeFollowUpEmail = async (user, dispute) => {
-  const subject = 'Dispute Follow-Up';
-  const text = `Hello ${user.name},\n\nYour dispute with ID ${dispute._id} is still pending. We are following up on it.\n\nBest regards,\nCredit Repair Team`;
-  await sendEmail(user.email, subject, text);
+  try {
+    await transporter.sendMail(mailOptions);
+    res.status(200).json({ message: 'Email sent successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to send email' });
+  }
 };
