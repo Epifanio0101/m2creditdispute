@@ -1,3 +1,4 @@
+// models/User.js
 const mongoose = require('mongoose');
 
 const UserSchema = new mongoose.Schema({
@@ -14,21 +15,9 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  confirmationCode: {
-    type: String,
-  },
-  resetPasswordToken: {
-    type: String,
-  },
-  resetPasswordExpires: {
+  date: {
     type: Date,
-  },
-  twoFactorSecret: {
-    type: String,
-  },
-  role: {
-    type: String,
-    default: 'user',
+    default: Date.now,
   },
 });
 
